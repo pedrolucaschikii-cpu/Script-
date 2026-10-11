@@ -1,0 +1,1191 @@
+--========================================================--
+-- NEXUS COMBAT - USER EDITION
+-- UI REWORK • LOCAL SAFE • ROBLOX STUDIO
+-- Coloque como LocalScript em StarterPlayerScripts.
+--========================================================--
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then return end
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+--========================================================--
+-- CONFIG / STATE
+--========================================================--
+
+local Config = {
+    LockRange = 250,
+    ESPUpdate = 0.2,
+    SafeHeight = 500,
+    SafeSize = 10000, -- 10,000 x 10,000 studs
+    SafeThickness = 4,
+}
+
+local State = {
+    Category = "IA",
+    IAAnswer = nil,
+
+    LockOn = false,
+    CurrentTarget = nil,
+    LockPart = "Head",
+    Ignored = {},
+
+    ESP = false,
+    ESPFilter = "", -- mantido internamente por compatibilidade; o filtro não aparece mais na interface
+    RevengeActive = false,
+    RevengeTarget = nil,
+    LastKiller = nil,
+
+    SavedLocations = {},
+    FarmRunning = false,
+    FarmLoop = true,
+
+    SafeActive = false,
+    SafePlatform = nil,
+    SafeReturnXZ = nil,
+    SafePlatformY = nil,
+}
+
+local C = {
+    Background = Color3.fromRGB(10, 11, 16),
+    Surface = Color3.fromRGB(17, 19, 27),
+    Surface2 = Color3.fromRGB(25, 28, 38),
+    Surface3 = Color3.fromRGB(34, 37, 49),
+    Accent = Color3.fromRGB(238, 190, 65),
+    AccentDark = Color3.fromRGB(143, 104, 25),
+    White = Color3.fromRGB(244, 245, 249),
+    Gray = Color3.fromRGB(151, 159, 176),
+    Green = Color3.fromRGB(70, 211, 130),
+    Red = Color3.fromRGB(235, 75, 88),
+    Black = Color3.fromRGB(5, 5, 8),
+    Stroke = Color3.fromRGB(48, 51, 65),
+}
+
+local function New(className, properties, parent)
+    local object = Instance.new(className)
+    for property, value in pairs(properties or {}) do
+        object[property] = value
+    end
+    object.Parent = parent
+    return object
+end
+
+local function Corner(object, radius)
+    New("UICorner", {CornerRadius = UDim.new(0, radius or 10)}, object)
+end
+
+local function Stroke(object, color, thickness)
+    New("UIStroke", {
+        Color = color or C.Stroke,
+        Thickness = thickness or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, object)
+end
+
+local function GetCharacter()
+    return LocalPlayer.Character
+end
+
+local function GetRoot(character)
+    character = character or GetCharacter()
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetHumanoid(character)
+    character = character or GetCharacter()
+    return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+--========================================================--
+-- CLEAN UP PREVIOUS COPY
+--========================================================--
+
+local oldGui = PlayerGui:FindFirstChild("NexusCombatUser")
+if oldGui then oldGui:Destroy() end
+
+local oldPlatform = Workspace:FindFirstChild("NexusLocalSafePlatform_" .. LocalPlayer.UserId)
+if oldPlatform then oldPlatform:Destroy() end
+
+--========================================================--
+-- GUI ROOT / FLOATING BUTTON
+--========================================================--
+
+local Gui = New("ScreenGui", {
+    Name = "NexusCombatUser",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, PlayerGui)
+
+local Float = New("TextButton", {
+    Name = "NexusFloat",
+    Size = UDim2.fromOffset(52, 52),
+    Position = UDim2.new(0, 18, 0.5, -26),
+    BackgroundColor3 = C.Black,
+    Text = "N",
+    TextColor3 = C.Accent,
+    TextSize = 27,
+    Font = Enum.Font.GothamBlack,
+    AutoButtonColor = false,
+    ZIndex = 20,
+}, Gui)
+Corner(Float, 16)
+Stroke(Float, C.Accent, 2)
+
+New("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(19, 19, 24)),
+        ColorSequenceKeypoint.new(1, C.Black),
+    }),
+    Rotation = 45,
+}, Float)
+
+-- Same compact menu footprint as the original.
+local Main = New("Frame", {
+    Name = "Main",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Size = UDim2.new(0.82, 0, 0.68, 0),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    BackgroundColor3 = C.Background,
+    Visible = false,
+    ClipsDescendants = true,
+}, Gui)
+Corner(Main, 18)
+Stroke(Main, C.Stroke, 1)
+
+New("UISizeConstraint", {
+    MinSize = Vector2.new(290, 350),
+    MaxSize = Vector2.new(390, 500),
+}, Main)
+
+New("UIGradient", {
+    Color = ColorSequence.new(C.Background, Color3.fromRGB(15, 17, 24)),
+    Rotation = 90,
+}, Main)
+
+--========================================================--
+-- HEADER
+--========================================================--
+
+local Header = New("Frame", {
+    Size = UDim2.new(1, 0, 0, 62),
+    BackgroundTransparency = 1,
+}, Main)
+
+New("TextLabel", {
+    Position = UDim2.fromOffset(16, 7),
+    Size = UDim2.new(0.55, 0, 0, 25),
+    BackgroundTransparency = 1,
+    Text = "NEXUS",
+    TextColor3 = C.White,
+    TextSize = 21,
+    Font = Enum.Font.GothamBlack,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, Header)
+
+New("TextLabel", {
+    Position = UDim2.fromOffset(17, 32),
+    Size = UDim2.new(0.62, 0, 0, 18),
+    BackgroundTransparency = 1,
+    Text = "USER EDITION • DEV",
+    TextColor3 = C.Accent,
+    TextSize = 9,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, Header)
+
+local Status = New("TextLabel", {
+    AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, -51, 0.5, 0),
+    Size = UDim2.fromOffset(95, 24),
+    BackgroundTransparency = 1,
+    Text = "● READY",
+    TextColor3 = C.Green,
+    TextSize = 10,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Right,
+}, Header)
+
+local Close = New("TextButton", {
+    AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, -9, 0.5, 0),
+    Size = UDim2.fromOffset(32, 32),
+    BackgroundColor3 = C.Surface2,
+    Text = "×",
+    TextColor3 = C.White,
+    TextSize = 21,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+}, Header)
+Corner(Close, 10)
+Stroke(Close, C.Stroke, 1)
+
+--========================================================--
+-- CATEGORY BAR
+--========================================================--
+
+local CategoryBar = New("ScrollingFrame", {
+    Position = UDim2.fromOffset(9, 62),
+    Size = UDim2.new(1, -18, 0, 42),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 0,
+    AutomaticCanvasSize = Enum.AutomaticSize.X,
+    CanvasSize = UDim2.new(),
+}, Main)
+
+local CategoryLayout = New("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0, 6),
+    VerticalAlignment = Enum.VerticalAlignment.Center,
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, CategoryBar)
+
+local Categories = {
+    {"IA", "✦"},
+    {"Combat", "⚔"},
+    {"ESP", "◎"},
+    {"Players", "♙"},
+    {"Places", "⌖"},
+    {"Watch", "◉"},
+    {"Farm", "✿"},
+    {"Local Seguro", "⬡"},
+    {"Settings", "⚙"},
+}
+local CategoryButtons = {}
+
+--========================================================--
+-- CONTENT AREA
+--========================================================--
+
+local Content = New("ScrollingFrame", {
+    Position = UDim2.fromOffset(9, 108),
+    Size = UDim2.new(1, -18, 1, -117),
+    BackgroundColor3 = C.Surface,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = C.Accent,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new(),
+}, Main)
+Corner(Content, 13)
+Stroke(Content, Color3.fromRGB(35, 38, 49), 1)
+
+New("UIPadding", {
+    PaddingTop = UDim.new(0, 10),
+    PaddingBottom = UDim.new(0, 10),
+    PaddingLeft = UDim.new(0, 10),
+    PaddingRight = UDim.new(0, 10),
+}, Content)
+
+New("UIListLayout", {
+    Padding = UDim.new(0, 7),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, Content)
+
+local RenderCategory
+
+local function ClearContent()
+    for _, child in ipairs(Content:GetChildren()) do
+        if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+            child:Destroy()
+        end
+    end
+end
+
+local function Label(text, height)
+    return New("TextLabel", {
+        Size = UDim2.new(1, 0, 0, height or 30),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = C.White,
+        TextSize = 11,
+        Font = Enum.Font.GothamMedium,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+    }, Content)
+end
+
+local function Section(text)
+    local holder = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 29),
+        BackgroundTransparency = 1,
+    }, Content)
+
+    New("TextLabel", {
+        Size = UDim2.new(1, 0, 1, -4),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = C.Accent,
+        TextSize = 10,
+        Font = Enum.Font.GothamBlack,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+    }, holder)
+
+    New("Frame", {
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, -1),
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = C.Stroke,
+        BorderSizePixel = 0,
+    }, holder)
+    return holder
+end
+
+local function Button(text, callback, background, height)
+    local button = New("TextButton", {
+        Size = UDim2.new(1, 0, 0, height or 36),
+        BackgroundColor3 = background or C.Surface2,
+        BorderSizePixel = 0,
+        Text = text,
+        TextColor3 = C.White,
+        TextSize = 11,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+        TextWrapped = true,
+    }, Content)
+    Corner(button, 9)
+    Stroke(button, background == C.AccentDark and C.Accent or C.Stroke, 1)
+
+    button.Activated:Connect(function()
+        if callback then callback() end
+    end)
+    return button
+end
+
+local function Toggle(text, enabled, callback)
+    local button = Button(
+        (enabled and "●  " or "○  ") .. text .. "     " .. (enabled and "ON" or "OFF"),
+        callback,
+        enabled and Color3.fromRGB(24, 65, 47) or C.Surface2,
+        38
+    )
+    button.TextColor3 = enabled and C.Green or C.Gray
+    return button
+end
+
+--========================================================--
+-- LOCAL SAFE PLATFORM
+-- This is client-created for testing in your own place.
+-- Server-authoritative games should implement/validate this
+-- mechanic on the server for reliable multiplayer behavior.
+--========================================================--
+
+local function FindGroundY(x, z, ignoreCharacter)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local excluded = {}
+    if ignoreCharacter and GetCharacter() then
+        table.insert(excluded, GetCharacter())
+    end
+    if State.SafePlatform then
+        table.insert(excluded, State.SafePlatform)
+    end
+    params.FilterDescendantsInstances = excluded
+    params.IgnoreWater = false
+
+    local result = Workspace:Raycast(
+        Vector3.new(x, 100000, z),
+        Vector3.new(0, -200000, 0),
+        params
+    )
+    return result and result.Position.Y or 0
+end
+
+local function EnsureSafePlatform()
+    if State.SafePlatform and State.SafePlatform.Parent then
+        return State.SafePlatform
+    end
+
+    local platform = New("Part", {
+        Name = "NexusLocalSafePlatform_" .. LocalPlayer.UserId,
+        Anchored = true,
+        CanCollide = true,
+        CanTouch = true,
+        CanQuery = true,
+        Size = Vector3.new(Config.SafeSize, Config.SafeThickness, Config.SafeSize),
+        Material = Enum.Material.SmoothPlastic,
+        Color = Color3.fromRGB(105, 111, 122),
+        Transparency = 0.18,
+        TopSurface = Enum.SurfaceType.Smooth,
+        BottomSurface = Enum.SurfaceType.Smooth,
+        CastShadow = false,
+    }, Workspace)
+
+    local top = New("Part", {
+        Name = "NexusSafePlatformAccent",
+        Anchored = true,
+        CanCollide = false,
+        CanTouch = false,
+        CanQuery = false,
+        Size = Vector3.new(Config.SafeSize, 0.25, Config.SafeSize),
+        Material = Enum.Material.SmoothPlastic,
+        Color = Color3.fromRGB(135, 141, 151),
+        Transparency = 0.72,
+        CastShadow = false,
+    }, Workspace)
+
+    State.SafePlatform = platform
+    platform:SetAttribute("NexusOwnerUserId", LocalPlayer.UserId)
+    platform:SetAttribute("NexusAccentName", top.Name)
+
+    -- Keep the accent attached logically to the platform position.
+    State.SafeAccent = top
+    return platform
+end
+
+local function PositionSafePlatform(x, y, z)
+    local platform = EnsureSafePlatform()
+    platform.CFrame = CFrame.new(x, y, z)
+    if State.SafeAccent and State.SafeAccent.Parent then
+        State.SafeAccent.CFrame = CFrame.new(x, y + Config.SafeThickness / 2 + 0.125, z)
+    end
+end
+
+local function ActivateSafe()
+    if State.SafeActive then return end
+
+    local character = GetCharacter()
+    local root = GetRoot(character)
+    local humanoid = GetHumanoid(character)
+    if not root or not humanoid or humanoid.Health <= 0 then
+        Status.Text = "● NO CHARACTER"
+        Status.TextColor3 = C.Red
+        return
+    end
+
+    local groundY = FindGroundY(root.Position.X, root.Position.Z, true)
+    local platformY = math.max(root.Position.Y + Config.SafeHeight, groundY + Config.SafeHeight)
+    State.SafeReturnXZ = Vector3.new(root.Position.X, 0, root.Position.Z)
+    State.SafePlatformY = platformY
+    PositionSafePlatform(root.Position.X, platformY, root.Position.Z)
+
+    State.SafeActive = true
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = CFrame.new(root.Position.X, platformY + Config.SafeThickness / 2 + 4, root.Position.Z)
+    Status.Text = "● SAFE ON"
+    Status.TextColor3 = C.Green
+end
+
+local function DeactivateSafe()
+    if not State.SafeActive then return end
+
+    local root = GetRoot()
+    if root then
+        local x, z = root.Position.X, root.Position.Z
+        local groundY = FindGroundY(x, z, true)
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.CFrame = CFrame.new(x, groundY + 5, z)
+    end
+
+    State.SafeActive = false
+    Status.Text = "● READY"
+    Status.TextColor3 = C.Green
+end
+
+local function ToggleSafe()
+    if State.SafeActive then
+        DeactivateSafe()
+    else
+        ActivateSafe()
+    end
+end
+
+--========================================================--
+-- IA
+--========================================================--
+
+local HelpAnswers = {
+    ["Como começo a usar o Nexus?"] = "Escolha uma categoria na barra superior. O conteúdo aparece nesta área e pode ser rolado.",
+    ["O que cada categoria faz?"] = "IA: guia interno. Combat: Lock-On e lista de ignorados. ESP: etiquetas de nomes. Players: lista de jogadores. Places: posições salvas. Watch: câmera espectadora. Farm: procura objetos spill com ProximityPrompt. Local Seguro: plataforma elevada local. Settings: informações e tutorial.",
+    ["Como funciona o Local Seguro?"] = "Ative para criar uma plataforma local de 10.000 x 10.000 studs e subir até ela. Ao desativar, você desce até o chão abaixo da sua posição atual. Em jogos com servidor autoritativo, implemente a mecânica também no servidor.",
+    ["Por que uma função pode não funcionar?"] = "Confira se o personagem está carregado e se o seu jogo permite essa mecânica. Funções de multiplayer podem precisar de validação no servidor.",
+}
+
+local HelpQuestions = {
+    "Como começo a usar o Nexus?",
+    "O que cada categoria faz?",
+    "Como funciona o Local Seguro?",
+    "Por que uma função pode não funcionar?",
+}
+
+local StartLockOn, StopLockOn, ClearESP
+
+local function RenderIA()
+    Section("✦ NEXUS BOT")
+    if State.IAAnswer then
+        Label(State.IAAnswer, 115)
+        Button("← VOLTAR", function()
+            State.IAAnswer = nil
+            RenderCategory()
+        end, C.AccentDark)
+        return
+    end
+
+    Label("Bem-vindo ao Nexus. Este guia funciona offline dentro do próprio script.", 54)
+    Section("MODOS RÁPIDOS")
+    Button(State.RevengeActive and "■ DESATIVAR MODO VINGANÇA" or "⚡ MODO VINGANÇA", function()
+        if State.RevengeActive then
+            State.RevengeActive = false
+            State.RevengeTarget = nil
+            State.ESP = false
+            if StopLockOn then StopLockOn() end
+            ClearESP()
+            State.IAAnswer = "Modo Vingança desativado."
+        else
+            local target = State.LastKiller
+            local targetHumanoid = target and target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+            if not target or target.Parent ~= Players or not targetHumanoid or targetHumanoid.Health <= 0 then
+                State.IAAnswer = "Ainda não consegui identificar quem te eliminou. O jogo precisa registrar o responsável pela eliminação (por exemplo, uma tag 'creator' no Humanoid)."
+            else
+                State.RevengeActive = true
+                State.RevengeTarget = target
+                State.ESP = true
+                State.CurrentTarget = target
+                if StartLockOn then StartLockOn() end
+                State.IAAnswer = "Modo Vingança ativo para: " .. target.DisplayName .. " (@" .. target.Name .. "). O modo encerra quando tu ou esse jogador morrerem."
+            end
+        end
+        RenderCategory()
+    end, State.RevengeActive and Color3.fromRGB(80, 32, 40) or C.AccentDark)
+    if State.RevengeActive and State.RevengeTarget then
+        Label("Alvo da vingança: " .. State.RevengeTarget.DisplayName .. "  @" .. State.RevengeTarget.Name, 36)
+    else
+        Label("O Modo Vingança depende do jogo informar quem causou a eliminação.", 42)
+    end
+    Section("GUIA RÁPIDO")
+    for _, question in ipairs(HelpQuestions) do
+        Button(question, function()
+            State.IAAnswer = HelpAnswers[question]
+            RenderCategory()
+        end)
+    end
+end
+
+local function ShowTutorial()
+    State.Category = "IA"
+    State.IAAnswer = "Bem-vindo ao Nexus! Escolha uma categoria na barra superior. Use Local Seguro para testar a plataforma no seu próprio jogo."
+    RenderCategory()
+end
+
+--========================================================--
+-- COMBAT / LOCK-ON
+--========================================================--
+
+local LockName = "NexusUserLockOn"
+
+local function GetTargetPart(player)
+    if not player or player == LocalPlayer then return nil end
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return nil end
+    if State.LockPart == "Head" then
+        return character:FindFirstChild("Head")
+    end
+    return character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("Torso")
+        or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function HasLineOfSight(player, targetPart)
+    local camera = Workspace.CurrentCamera
+    local character = GetCharacter()
+    if not camera or not targetPart or not character then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {character}
+    params.IgnoreWater = true
+    local direction = targetPart.Position - camera.CFrame.Position
+    local result = Workspace:Raycast(camera.CFrame.Position, direction, params)
+    return not result or (player.Character and result.Instance:IsDescendantOf(player.Character))
+end
+
+local function IsValidTarget(player)
+    if not player or player == LocalPlayer or State.Ignored[player.UserId] then return false end
+    if State.RevengeActive and player ~= State.RevengeTarget then return false end
+    local part = GetTargetPart(player)
+    local root = GetRoot()
+    if not part or not root then return false end
+    if (part.Position - root.Position).Magnitude > Config.LockRange then return false end
+    return HasLineOfSight(player, part)
+end
+
+local function FindBestTarget()
+    if State.RevengeActive then
+        return IsValidTarget(State.RevengeTarget) and State.RevengeTarget or nil
+    end
+    local root = GetRoot()
+    if not root then return nil end
+    local best, bestDistance = nil, math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if IsValidTarget(player) then
+            local part = GetTargetPart(player)
+            local distance = part and (part.Position - root.Position).Magnitude or math.huge
+            if distance < bestDistance then
+                best, bestDistance = player, distance
+            end
+        end
+    end
+    return best
+end
+
+StopLockOn = function()
+    State.LockOn = false
+    State.CurrentTarget = nil
+    pcall(function() RunService:UnbindFromRenderStep(LockName) end)
+end
+
+StartLockOn = function()
+    State.LockOn = true
+    State.CurrentTarget = FindBestTarget()
+    pcall(function() RunService:UnbindFromRenderStep(LockName) end)
+    RunService:BindToRenderStep(LockName, Enum.RenderPriority.Camera.Value + 1, function()
+        if not State.LockOn then return end
+        local camera = Workspace.CurrentCamera
+        if not camera then return end
+        if not IsValidTarget(State.CurrentTarget) then
+            State.CurrentTarget = FindBestTarget()
+        end
+        local target = State.CurrentTarget
+        local part = target and GetTargetPart(target)
+        if part and HasLineOfSight(target, part) then
+            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, part.Position)
+        end
+    end)
+end
+
+local function RenderCombat()
+    Section("LOCK-ON")
+    Toggle("Lock-On", State.LockOn, function()
+        if State.LockOn then StopLockOn() else StartLockOn() end
+        RenderCategory()
+    end)
+    Button("Alcance: " .. Config.LockRange .. " studs", function()
+        Config.LockRange = Config.LockRange == 150 and 250 or (Config.LockRange == 250 and 350 or 150)
+        RenderCategory()
+    end)
+    Button("Parte da mira: " .. State.LockPart, function()
+        State.LockPart = State.LockPart == "Head" and "Torso" or "Head"
+        if State.LockOn then State.CurrentTarget = FindBestTarget() end
+        RenderCategory()
+    end)
+    Section("ALVO ATUAL")
+    local target = State.CurrentTarget
+    local info = Label(target and (target.DisplayName .. "  @" .. target.Name) or "Nenhum alvo", 32)
+    info.TextColor3 = target and C.Green or C.Gray
+    Section("IGNORAR JOGADORES")
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local ignored = State.Ignored[player.UserId] == true
+            Button((ignored and "×  " or "✓  ") .. player.DisplayName .. "  @" .. player.Name, function()
+                State.Ignored[player.UserId] = not State.Ignored[player.UserId]
+                if State.CurrentTarget == player then State.CurrentTarget = nil end
+                if State.LockOn then State.CurrentTarget = FindBestTarget() end
+                RenderCategory()
+            end, ignored and Color3.fromRGB(75, 30, 38) or C.Surface2)
+        end
+    end
+end
+
+--========================================================--
+-- ESP
+--========================================================--
+
+local ESPFolder = New("Folder", {Name = "NexusESP"}, Gui)
+
+ClearESP = function()
+    for _, object in ipairs(ESPFolder:GetChildren()) do object:Destroy() end
+end
+
+local function UpdateESP()
+    if not State.ESP then ClearESP(); return end
+
+    local activeIds = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local character = player.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            local head = character and character:FindFirstChild("Head")
+            local allowed = not State.RevengeActive or player == State.RevengeTarget
+            local old = ESPFolder:FindFirstChild(tostring(player.UserId))
+
+            if head and humanoid and humanoid.Health > 0 and allowed then
+                activeIds[tostring(player.UserId)] = true
+                if old and old.Adornee ~= head then
+                    old:Destroy()
+                    old = nil
+                end
+                if not old then
+                    old = New("BillboardGui", {
+                        Name = tostring(player.UserId),
+                        Adornee = head,
+                        AlwaysOnTop = true,
+                        Size = UDim2.fromOffset(200, 28),
+                        StudsOffset = Vector3.new(0, 3, 0),
+                    }, ESPFolder)
+                    New("TextLabel", {
+                        Size = UDim2.fromScale(1, 1),
+                        BackgroundTransparency = 1,
+                        Text = player.DisplayName .. "  @" .. player.Name,
+                        TextColor3 = C.White,
+                        TextStrokeTransparency = 0.15,
+                        TextSize = 11,
+                        Font = Enum.Font.GothamBold,
+                    }, old)
+                else
+                    local label = old:FindFirstChildOfClass("TextLabel")
+                    if label then label.Text = player.DisplayName .. "  @" .. player.Name end
+                end
+            elseif old then
+                old:Destroy()
+            end
+        end
+    end
+
+    for _, object in ipairs(ESPFolder:GetChildren()) do
+        if not activeIds[object.Name] then object:Destroy() end
+    end
+
+    if State.RevengeActive then
+        local target = State.RevengeTarget
+        local humanoid = target and target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+        if not target or target.Parent ~= Players or not humanoid or humanoid.Health <= 0 then
+            State.RevengeActive = false
+            State.RevengeTarget = nil
+            State.ESP = false
+            if StopLockOn then StopLockOn() end
+            ClearESP()
+        end
+    end
+end
+
+task.spawn(function()
+    while Gui.Parent do
+        task.wait(Config.ESPUpdate)
+        UpdateESP()
+    end
+end)
+
+local function RenderESP()
+    Section("ESP DE NOMES")
+    Toggle("Mostrar nomes", State.ESP, function()
+        State.ESP = not State.ESP
+        if not State.ESP then ClearESP() end
+        RenderCategory()
+    end)
+    Label("O ESP atualiza automaticamente: entrada, saída, morte e renascimento dos jogadores.", 50)
+end
+
+--========================================================--
+-- PLAYERS / PLACES / WATCH
+--========================================================--
+
+local function RenderPlayers()
+    Section("JOGADORES DA SESSÃO")
+    Label("Lista de jogadores disponíveis nesta sessão.", 28)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            Button(player.DisplayName .. "  @" .. player.Name, function()
+                local root = GetRoot()
+                local targetRoot = GetRoot(player.Character)
+                if root and targetRoot then
+                    root.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
+                end
+            end)
+        end
+    end
+end
+
+local function RenderPlaces()
+    Section("POSIÇÕES SALVAS")
+    Label("As posições ficam guardadas durante esta sessão.", 34)
+    Button("＋ Salvar posição atual", function()
+        local root = GetRoot()
+        if root then
+            table.insert(State.SavedLocations, root.CFrame)
+            RenderCategory()
+        end
+    end, C.AccentDark)
+    if #State.SavedLocations == 0 then
+        Label("Nenhuma posição salva ainda.", 28)
+    end
+    for index, saved in ipairs(State.SavedLocations) do
+        Button("Ir para posição #" .. index, function()
+            local root = GetRoot()
+            if root then root.CFrame = saved end
+        end)
+    end
+end
+
+local function RenderWatch()
+    Section("CÂMERA")
+    Button("Voltar para meu personagem", function()
+        local humanoid = GetHumanoid()
+        if humanoid and Workspace.CurrentCamera then
+            Workspace.CurrentCamera.CameraSubject = humanoid
+        end
+    end, C.AccentDark)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            Button("Assistir: " .. player.DisplayName, function()
+                local humanoid = GetHumanoid(player.Character)
+                if humanoid and Workspace.CurrentCamera then
+                    Workspace.CurrentCamera.CameraSubject = humanoid
+                end
+            end)
+        end
+    end
+end
+
+--========================================================--
+-- FARM
+--========================================================--
+
+local function GetFarmRoot(object)
+    if object:IsA("BasePart") then return object end
+    if object:IsA("Model") then
+        return object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return object:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function GetFarmPrompt(object)
+    return object:FindFirstChildWhichIsA("ProximityPrompt", true)
+end
+
+local function GetSpills()
+    local list = {}
+    for _, object in ipairs(Workspace:GetDescendants()) do
+        if string.lower(object.Name):sub(1, 5) == "spill" then
+            local root = GetFarmRoot(object)
+            local prompt = GetFarmPrompt(object)
+            if root and prompt and prompt.Enabled then
+                table.insert(list, {Object = object, Root = root, Prompt = prompt})
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.Object.Name < b.Object.Name end)
+    return list
+end
+
+local function FarmOne(spill)
+    if not State.FarmRunning then return false end
+    local object = spill.Object
+    if not object or not object.Parent then return false end
+    local objectRoot = GetFarmRoot(object)
+    local root = GetRoot()
+    if not objectRoot or not root then return false end
+    local prompt = GetFarmPrompt(object)
+    if not prompt or not prompt.Enabled then return true end
+
+    root.CFrame = objectRoot.CFrame + Vector3.new(0, 2.5, 0)
+    task.wait(0.15)
+    if not State.FarmRunning then return false end
+
+    prompt = GetFarmPrompt(object)
+    if not prompt or not prompt.Enabled then return true end
+
+    local ok = pcall(function()
+        prompt:InputHoldBegin()
+        task.wait(math.max(0.1, prompt.HoldDuration))
+        prompt:InputHoldEnd()
+    end)
+    if not ok then return false end
+    task.wait(0.25)
+    return not object.Parent or not GetFarmPrompt(object) or not GetFarmPrompt(object).Enabled
+end
+
+local function StartAutoFarm()
+    if State.FarmRunning then return end
+    State.FarmRunning = true
+    task.spawn(function()
+        while State.FarmRunning do
+            local spills = GetSpills()
+            if #spills == 0 then
+                task.wait(0.5)
+            else
+                for _, spill in ipairs(spills) do
+                    if not State.FarmRunning then break end
+                    local completed = false
+                    for _ = 1, 3 do
+                        if not State.FarmRunning then break end
+                        completed = FarmOne(spill)
+                        if completed then break end
+                        task.wait(0.15)
+                    end
+                end
+                if not State.FarmLoop then break end
+                task.wait(0.25)
+            end
+        end
+        State.FarmRunning = false
+    end)
+end
+
+local function RenderFarm()
+    Section("AUTO FARM")
+    Label("Procura objetos cujo nome começa com 'spill' e que tenham ProximityPrompt ativo.", 48)
+    local spills = GetSpills()
+    local status = Label((State.FarmRunning and "● FARM ATIVO\n" or "○ FARM PARADO\n") .. #spills .. " spills encontrados", 42)
+    status.TextColor3 = State.FarmRunning and C.Green or C.Gray
+    Button(State.FarmRunning and "■ PARAR FARM" or "▶ INICIAR FARM", function()
+        if State.FarmRunning then
+            State.FarmRunning = false
+        else
+            StartAutoFarm()
+        end
+        RenderCategory()
+    end, State.FarmRunning and Color3.fromRGB(80, 32, 40) or C.AccentDark)
+    Toggle("Loop automático", State.FarmLoop, function()
+        State.FarmLoop = not State.FarmLoop
+        RenderCategory()
+    end)
+    Button("Atualizar lista de spills", function() RenderCategory() end)
+end
+
+--========================================================--
+-- LOCAL SAFE CATEGORY
+--========================================================--
+
+local function RenderSafe()
+    Section("⬡ LOCAL SEGURO")
+    Label("Plataforma local de 10.000 × 10.000 studs. Ela é criada no cliente para testes no seu próprio lugar.", 56)
+
+    local stateLabel = Label(State.SafeActive and "● PLATAFORMA ATIVA" or "○ PLATAFORMA DESATIVADA", 30)
+    stateLabel.TextColor3 = State.SafeActive and C.Green or C.Gray
+
+    Button(State.SafeActive and "↓ DESATIVAR E DESCER" or "↑ ATIVAR LOCAL SEGURO", ToggleSafe,
+        State.SafeActive and Color3.fromRGB(80, 32, 40) or C.AccentDark, 42)
+
+    Section("CONFIGURAÇÃO")
+    Label("Altura: " .. Config.SafeHeight .. " studs", 25)
+    Button("Altura: 300 studs", function()
+        Config.SafeHeight = 300
+        RenderCategory()
+    end)
+    Button("Altura: 500 studs", function()
+        Config.SafeHeight = 500
+        RenderCategory()
+    end)
+    Button("Altura: 800 studs", function()
+        Config.SafeHeight = 800
+        RenderCategory()
+    end)
+
+    Section("IMPORTANTE")
+    Label("Ao desativar, o personagem desce até a superfície encontrada abaixo da posição atual; não retorna à posição em que ativou. A plataforma é local e não garante colisão/replicação no servidor.", 82)
+
+    Button("Remover plataforma local", function()
+        if State.SafeActive then
+            DeactivateSafe()
+        end
+        if State.SafePlatform then State.SafePlatform:Destroy() end
+        if State.SafeAccent then State.SafeAccent:Destroy() end
+        State.SafePlatform = nil
+        State.SafeAccent = nil
+        RenderCategory()
+    end)
+end
+
+--========================================================--
+-- SETTINGS
+--========================================================--
+
+local function RenderSettings()
+    Section("NEXUS • SETTINGS")
+    Label("USER EDITION\nLocalScript • Roblox Studio\nJogador: " .. LocalPlayer.Name .. "\nUserId: " .. LocalPlayer.UserId, 76)
+    Section("TUTORIAL")
+    Button("Abrir guia novamente", ShowTutorial, C.AccentDark)
+    Section("INTERFACE")
+    Button("Fechar menu", function() Main.Visible = false end)
+    Label("O menu mantém o tamanho compacto original. A barra de categorias pode ser deslizada horizontalmente.", 48)
+end
+
+--========================================================--
+-- CATEGORY BUTTONS
+--========================================================--
+
+for index, data in ipairs(Categories) do
+    local name, icon = data[1], data[2]
+    local width = name == "Local Seguro" and 112 or (name == "Settings" and 91 or (name == "Combat" and 88 or 82))
+
+    local button = New("TextButton", {
+        Name = "Category_" .. name:gsub("%s+", ""),
+        LayoutOrder = index,
+        Size = UDim2.fromOffset(width, 34),
+        BackgroundColor3 = C.Surface2,
+        BorderSizePixel = 0,
+        Text = icon .. "  " .. name,
+        TextColor3 = C.Gray,
+        TextSize = 10,
+        Font = Enum.Font.GothamBold,
+        AutoButtonColor = false,
+    }, CategoryBar)
+    Corner(button, 9)
+    Stroke(button, C.Stroke, 1)
+    CategoryButtons[name] = button
+
+    button.Activated:Connect(function()
+        State.Category = name
+        State.IAAnswer = nil
+        RenderCategory()
+    end)
+end
+
+--========================================================--
+-- RENDER ROUTER
+--========================================================--
+
+RenderCategory = function()
+    ClearContent()
+
+    for name, button in pairs(CategoryButtons) do
+        local selected = name == State.Category
+        button.BackgroundColor3 = selected and C.AccentDark or C.Surface2
+        button.TextColor3 = selected and C.White or C.Gray
+        local stroke = button:FindFirstChildOfClass("UIStroke")
+        if stroke then stroke.Color = selected and C.Accent or C.Stroke end
+    end
+
+    if State.Category == "IA" then
+        RenderIA()
+    elseif State.Category == "Combat" then
+        RenderCombat()
+    elseif State.Category == "ESP" then
+        RenderESP()
+    elseif State.Category == "Players" then
+        RenderPlayers()
+    elseif State.Category == "Places" then
+        RenderPlaces()
+    elseif State.Category == "Watch" then
+        RenderWatch()
+    elseif State.Category == "Farm" then
+        RenderFarm()
+    elseif State.Category == "Local Seguro" then
+        RenderSafe()
+    elseif State.Category == "Settings" then
+        RenderSettings()
+    end
+end
+
+--========================================================--
+-- LIVE TARGET VALIDATION
+--========================================================--
+
+task.spawn(function()
+    while Gui.Parent do
+        task.wait(0.1)
+        if State.LockOn and not IsValidTarget(State.CurrentTarget) then
+            State.CurrentTarget = FindBestTarget()
+        end
+    end
+end)
+
+--========================================================--
+-- DRAG FLOATING BUTTON
+--========================================================--
+
+local dragStart
+local startPosition
+local dragging = false
+local dragInput
+
+Float.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragStart = input.Position
+        startPosition = Float.Position
+        dragging = false
+        dragInput = input
+    end
+end)
+
+Float.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+        if not dragStart then return end
+        local delta = input.Position - dragStart
+        if math.abs(delta.X) > 5 or math.abs(delta.Y) > 5 then
+            dragging = true
+            Float.Position = UDim2.new(
+                startPosition.X.Scale, startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale, startPosition.Y.Offset + delta.Y
+            )
+        end
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragInput and input == dragInput and input.UserInputType == Enum.UserInputType.Touch then
+        -- Touch movement is handled by Float.InputChanged.
+    end
+end)
+
+Float.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragStart = nil
+        dragInput = nil
+    end
+end)
+
+Float.Activated:Connect(function()
+    if dragging then
+        dragging = false
+        return
+    end
+    Main.Visible = not Main.Visible
+    if Main.Visible then RenderCategory() end
+end)
+
+Close.Activated:Connect(function()
+    Main.Visible = false
+end)
+
+--========================================================--
+-- CLEANUP / RESPAWN
+--========================================================--
+
+local function WatchLocalCharacter(character)
+    local humanoid = character:WaitForChild("Humanoid", 10)
+    if not humanoid then return end
+    humanoid.Died:Connect(function()
+        local tag = humanoid:FindFirstChild("creator") or humanoid:FindFirstChild("Creator")
+        local killer = tag and tag:IsA("ObjectValue") and tag.Value
+        if killer and killer:IsA("Player") and killer ~= LocalPlayer then
+            State.LastKiller = killer
+        end
+        if State.RevengeActive then
+            State.RevengeActive = false
+            State.RevengeTarget = nil
+            State.ESP = false
+            if StopLockOn then StopLockOn() end
+            ClearESP()
+        end
+    end)
+end
+
+if LocalPlayer.Character then task.spawn(WatchLocalCharacter, LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(function(character)
+    WatchLocalCharacter(character)
+    if State.SafeActive then
+        State.SafeActive = false
+        Status.Text = "● READY"
+        Status.TextColor3 = C.Green
+    end
+end)
+
+Gui.Destroying:Connect(function()
+    StopLockOn()
+    State.FarmRunning = false
+    if State.SafePlatform then State.SafePlatform:Destroy() end
+    if State.SafeAccent then State.SafeAccent:Destroy() end
+end)
+
+RenderCategory()
